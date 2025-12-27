@@ -39,7 +39,7 @@ class SensorsSimulator:
         """Return appropriate unit based on sensor name"""
         units = {
             "temp1": "°C",
-            "temp2": "°C", 
+            "optical": "counts", 
             "press": "psi",
             "speed": "rpm",
             "vib": "mm/s"
@@ -93,7 +93,7 @@ if __name__ == "__main__":
     # 1. Create instances
     sensors = [
         SensorsSimulator(100, "temp1", 20, 100, 0.5),
-        SensorsSimulator(200, "temp2", 20, 100, 0.5),
+        SensorsSimulator(200, "optical", 0, 1000, 0.5),
         SensorsSimulator(300, "press", 10, 50, 0.3),
         SensorsSimulator(400, "speed", 5, 200, 0.8),
         SensorsSimulator(500, "vib", 0, 5, 0.1)

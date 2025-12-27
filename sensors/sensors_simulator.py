@@ -1,0 +1,117 @@
+#!/usr/bin/env python3
+import random
+import threading
+import time
+import queue
+import json
+import socket
+
+HOST = '127.0.0.1'
+PORT = 5000
+
+class SensorsSimulator:
+    # Static variables shared by ALL instances
+    data_queue = queue.Queue()
+    running = True 
+    fault_probability = 0.02
+
+
+    def __init__(self, sensor_id: int, name: str, min_val: int, max_val: int, interval: float) -> None:
+        self.id = sensor_id
+        self.name = name
+        self.min_val = min_val
+        self.max_val = max_val
+        self.interval = interval
+
+    def determine_status(self, value: int) -> str:
+        """Determine if sensor is OK, FAULTY, or in ALARM"""
+        # Random faulty sensor (1% chance)
+        if random.random() < SensorsSimulator.fault_probability:
+            return "FAULTY"
+        
+        # Check if value is within reasonable range (not exactly min/max)
+        if value <= self.min_val * 1.05 or value >= self.max_val * 0.95:
+            return "HIGH_ALARM" if value > self.max_val else "LOW_ALARM"
+        
+        return "OK"
+
+    def get_unit(self):
+        """Return appropriate unit based on sensor name"""
+        units = {
+            "temp1": "°C",
+            "temp2": "°C", 
+            "press": "psi",
+            "speed": "rpm",
+            "vib": "mm/s"
+        }
+        return units.get(self.name, "units")
+    
+    def run_simulation(self) -> None:
+        """The logic loop for each sensor instance"""
+        while SensorsSimulator.running:
+            value = random.uniform(self.min_val, self.max_val)
+            
+            status = self.determine_status(value)
+
+            packet = {
+                "id": self.id,
+                "sensor": self.name,
+                "value": round(value, 2), 
+                "timestamp": time.time(),
+                "status": status,
+                "unit": self.get_unit()
+            }
+
+            # Put into the shared static queue
+            SensorsSimulator.data_queue.put(packet)
+            time.sleep(self.interval)
+
+    @staticmethod
+    def tcp_transmitter() -> None:
+        """Centralized transmitter for all instances"""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            # Allow address reuse (prevents "Port already in use" errors on restart)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind((HOST, PORT))
+            s.listen(1)
+            print(f"Simulator: Server started. Waiting for Dashboard on {PORT}...")
+
+            conn, addr = s.accept()
+            print(f"Simulator: Dashboard connected from {addr}")
+
+            with conn:
+                while SensorsSimulator.running:
+                    try:
+                        data = SensorsSimulator.data_queue.get()
+                        message = json.dumps(data) + "\n"
+                        conn.sendall(message.encode('utf-8'))
+                    except (ConnectionResetError, BrokenPipeError):
+                        print("Dashboard disconnected.")
+                        break
+
+if __name__ == "__main__":
+    # 1. Create instances
+    sensors = [
+        SensorsSimulator(100, "temp1", 20, 100, 0.5),
+        SensorsSimulator(200, "temp2", 20, 100, 0.5),
+        SensorsSimulator(300, "press", 10, 50, 0.3),
+        SensorsSimulator(400, "speed", 5, 200, 0.8),
+        SensorsSimulator(500, "vib", 0, 5, 0.1)
+    ]
+
+    # 2. Start Transmitter
+    threading.Thread(target=SensorsSimulator.tcp_transmitter, daemon=True).start()
+
+    # 3. Start each sensor in its own thread
+    for s in sensors:
+        # Note the .start() at the end!
+        threading.Thread(target=s.run_simulation, daemon=True).start()
+        print(f"Thread started for {s.name}")
+
+    # Keep main thread alive
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        SensorsSimulator.running = False
+        print("\nStopping simulator...")

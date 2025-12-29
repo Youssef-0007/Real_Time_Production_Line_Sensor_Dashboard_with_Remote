@@ -5,6 +5,8 @@ import time
 import queue
 import json
 import socket
+import os
+
 
 HOST = '127.0.0.1'
 PORT = 5000
@@ -23,48 +25,54 @@ class SensorsSimulator:
         self.max_val = max_val
         self.interval = interval
 
-    def determine_status(self, value: int) -> str:
-        """Determine if sensor is OK, FAULTY, or in ALARM"""
+    def determine_status(self) -> str:
+        """Determine if sensor is OK, or FAULTY"""
         # Random faulty sensor (1% chance)
         if random.random() < SensorsSimulator.fault_probability:
             return "FAULTY"
-        
-        # Check if value is within reasonable range (not exactly min/max)
-        if value <= self.min_val * 1.05 or value >= self.max_val * 0.95:
-            return "HIGH_ALARM" if value > self.max_val else "LOW_ALARM"
-        
-        return "OK"
+        return "OK"      
 
-    def get_unit(self):
-        """Return appropriate unit based on sensor name"""
-        units = {
-            "temp1": "°C",
-            "optical": "counts", 
-            "press": "psi",
-            "speed": "rpm",
-            "vib": "mm/s"
-        }
-        return units.get(self.name, "units")
-    
     def run_simulation(self) -> None:
-        """The logic loop for each sensor instance"""
+        """The logic loop for each sensor instance reading from a file"""
+        
+        # 1. Load the data into memory once
+        try:
+            # Note: Ensure the path is correct relative to where you RUN the script
+            with open(f"../test_data/{self.name}_data.txt") as f:
+                lines = f.read().splitlines()
+            print(f"Loaded {len(lines)} data points for {self.name}")
+        except Exception as e:
+            print(f"Error: Could not open test_data/{self.name}_data.txt: {e}")
+            return
+        
+        # 2. Start the infinite loop
         while SensorsSimulator.running:
-            value = random.uniform(self.min_val, self.max_val)
-            
-            status = self.determine_status(value)
+            for line in lines:
+                if not SensorsSimulator.running: break
+                
+                try:
+                    # Convert string from file to float
+                    value = float(line.strip())
+                    
+                    # Call status logic (pass the value!)
+                    status = self.determine_status()
 
-            packet = {
-                "id": self.id,
-                "sensor": self.name,
-                "value": round(value, 2), 
-                "timestamp": time.time(),
-                "status": status,
-                "unit": self.get_unit()
-            }
+                    packet = {
+                        "id": self.id,
+                        "sensor": self.name,
+                        "value": value, #round(value, 2), 
+                        "timestamp": time.time(),
+                        "status": status,
+                    }
 
-            # Put into the shared static queue
-            SensorsSimulator.data_queue.put(packet)
-            time.sleep(self.interval)
+                    SensorsSimulator.data_queue.put(packet)
+                    
+                    # Control the speed of playback
+                    time.sleep(self.interval)
+                    
+                except ValueError:
+                    print(f"Skipping invalid data line in {self.name}: {line}")
+                    continue
 
     @staticmethod
     def tcp_transmitter() -> None:
@@ -79,24 +87,62 @@ class SensorsSimulator:
             conn, addr = s.accept()
             print(f"Simulator: Dashboard connected from {addr}")
 
+            # start the tcp_receiver as thread inside the tcp_transmitter after accepting connection, 
+            # both threads share the same conn
+            # We pass the 'conn' object so it can listen on the same pipe
+            receiver_thread = threading.Thread(target=SensorsSimulator.tcp_receiver, args=(conn,), daemon=True)
+            receiver_thread.start()
+
             with conn:
                 while SensorsSimulator.running:
                     try:
                         data = SensorsSimulator.data_queue.get()
                         message = json.dumps(data) + "\n"
                         conn.sendall(message.encode('utf-8'))
+                    except queue.Empty:
+                        continue # Keep the loop alive if no sensor data is ready
                     except (ConnectionResetError, BrokenPipeError):
                         print("Dashboard disconnected.")
                         break
 
+    @ staticmethod
+    def tcp_receiver(conn):
+        """Bonus A: Maintenance Console Logic"""
+        print("Simulator: Command Listener Active.")
+        while SensorsSimulator.running:
+            try:
+                # Receive the command from the GUI
+                data = conn.recv(1024).decode('utf-8')
+                if not data:
+                    break
+                
+                # TCP can "clump" messages, so we split by newline if needed
+                for line in data.strip().split('\n'):
+                    cmd = json.loads(line)
+                    action = cmd.get('action')
+                    
+                    print(f"\n[COMMAND RECEIVED]: {action}")
+                    
+                    if action == "restart":
+                        print(">>> ACTION: Re-initializing sensor baseline...")
+                        # Logic to reset sensors 
+                    elif action == "self_test":
+                        print(">>> ACTION: Running internal diagnostic sweep...")
+                    elif action == "snapshot":
+                        print(">>> ACTION: Generating high-priority data dump...")
+            except Exception as e:
+                print(f"Receiver Error: {e}")
+                break
+
 if __name__ == "__main__":
     # 1. Create instances
     sensors = [
-        SensorsSimulator(100, "temp1", 20, 100, 0.5),
-        SensorsSimulator(200, "optical", 0, 1000, 0.5),
-        SensorsSimulator(300, "press", 10, 50, 0.3),
-        SensorsSimulator(400, "speed", 5, 200, 0.8),
-        SensorsSimulator(500, "vib", 0, 5, 0.1)
+        # SensorID, Name, Min, Max, Interval
+        SensorsSimulator(100, "temp", 20, 100, 10),
+        SensorsSimulator(200, "optical", 0, 1000, 2),
+        SensorsSimulator(300, "press", 0, 10, 3),
+        SensorsSimulator(400, "speed", 0, 1500, 5),
+        SensorsSimulator(500, "vib", 0, 10, 8)
     ]
 
     # 2. Start Transmitter
@@ -104,7 +150,6 @@ if __name__ == "__main__":
 
     # 3. Start each sensor in its own thread
     for s in sensors:
-        # Note the .start() at the end!
         threading.Thread(target=s.run_simulation, daemon=True).start()
         print(f"Thread started for {s.name}")
 

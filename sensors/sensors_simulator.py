@@ -14,8 +14,11 @@ PORT = 5000
 class SensorsSimulator:
     # Static variables shared by ALL instances
     data_queue = queue.Queue()
-    running = True 
     fault_probability = 0.02
+    # Use an Event for Reset (Thread-safe Traffic Light)
+    reset_evt = threading.Event()
+    # Use an Event for Global Running status
+    running_evt = threading.Event()
 
 
     def __init__(self, sensor_id: int, name: str, min_val: int, max_val: int, interval: float) -> None:
@@ -25,54 +28,57 @@ class SensorsSimulator:
         self.max_val = max_val
         self.interval = interval
 
-    def determine_status(self) -> str:
-        """Determine if sensor is OK, or FAULTY"""
-        # Random faulty sensor (1% chance)
-        if random.random() < SensorsSimulator.fault_probability:
-            return "FAULTY"
-        return "OK"      
-
     def run_simulation(self) -> None:
-        """The logic loop for each sensor instance reading from a file"""
-        
-        # 1. Load the data into memory once
+        """Logic loop with Restart Support"""
+        file_path = f"./test_data/{self.name}_data.txt"
         try:
-            # Note: Ensure the path is correct relative to where you RUN the script
-            with open(f"../test_data/{self.name}_data.txt") as f:
+            with open(file_path) as f:
                 lines = f.read().splitlines()
-            print(f"Loaded {len(lines)} data points for {self.name}")
-        except Exception as e:
-            print(f"Error: Could not open test_data/{self.name}_data.txt: {e}")
+        except:
+            print(f"File {file_path} not found. Thread ending.")
             return
         
-        # 2. Start the infinite loop
-        while SensorsSimulator.running:
+        while SensorsSimulator.running_evt.is_set():
             for line in lines:
-                if not SensorsSimulator.running: break
+                # CHECK FOR RESET
+                if SensorsSimulator.reset_evt.is_set():
+                    break 
+
+                if not SensorsSimulator.running_evt.is_set():
+                    return # Exit thread entirely
                 
-                try:
-                    # Convert string from file to float
-                    value = float(line.strip())
-                    
-                    # Call status logic (pass the value!)
-                    status = self.determine_status()
+                value = float(line.strip())
+                status = "FAULTY" if random.random() < self.fault_probability else "OK"
+                packet = {
+                    "id": self.id, "sensor": self.name, "value": value,
+                    "timestamp": time.time(), "status": status
+                }
+                SensorsSimulator.data_queue.put(packet)
 
+                time.sleep(self.interval)
+                    
+
+            # ------ Handle the reset logic ----
+            if SensorsSimulator.reset_evt.is_set():
+                if self.id == 100: # Only first sensor flips flag back
+                    SensorsSimulator.reset_evt.clear()
+                print(f"Simulator: {self.name} resetart!")
+            
+            else:
+                # in this case the reset event doesn't being sat, so this means reached the end of the test data 
+                # this could be treated to be FAULTY sensor where no data comming from
+                # the sensor will stuck into this case until being reset
+                while not SensorsSimulator.reset_evt.is_set() and SensorsSimulator.running_evt.is_set():
+                    value = 0
+                    status = "FAULTY"
                     packet = {
-                        "id": self.id,
-                        "sensor": self.name,
-                        "value": value, #round(value, 2), 
-                        "timestamp": time.time(),
-                        "status": status,
+                        "id": self.id, "sensor": self.name, "value": value,
+                        "timestamp": time.time(), "status": status
                     }
-
                     SensorsSimulator.data_queue.put(packet)
-                    
-                    # Control the speed of playback
                     time.sleep(self.interval)
-                    
-                except ValueError:
-                    print(f"Skipping invalid data line in {self.name}: {line}")
-                    continue
+            
+            
 
     @staticmethod
     def tcp_transmitter() -> None:
@@ -94,7 +100,7 @@ class SensorsSimulator:
             receiver_thread.start()
 
             with conn:
-                while SensorsSimulator.running:
+                while SensorsSimulator.running_evt.is_set():
                     try:
                         data = SensorsSimulator.data_queue.get()
                         message = json.dumps(data) + "\n"
@@ -109,7 +115,7 @@ class SensorsSimulator:
     def tcp_receiver(conn):
         """Bonus A: Maintenance Console Logic"""
         print("Simulator: Command Listener Active.")
-        while SensorsSimulator.running:
+        while SensorsSimulator.running_evt.is_set():
             try:
                 # Receive the command from the GUI
                 data = conn.recv(1024).decode('utf-8')
@@ -119,36 +125,37 @@ class SensorsSimulator:
                 # TCP can "clump" messages, so we split by newline if needed
                 for line in data.strip().split('\n'):
                     cmd = json.loads(line)
-                    action = cmd.get('action')
+                    if cmd.get('action') == "restart":
+                        # 1. Clear the queue backlog
+                        while not SensorsSimulator.data_queue.empty():
+                            try: SensorsSimulator.data_queue.get_nowait()
+                            except: break
+                        # 2. Trigger the Event
+                        SensorsSimulator.reset_evt.set()
+            except: break
                     
-                    print(f"\n[COMMAND RECEIVED]: {action}")
-                    
-                    if action == "restart":
-                        print(">>> ACTION: Re-initializing sensor baseline...")
-                        # Logic to reset sensors 
-                    elif action == "self_test":
-                        print(">>> ACTION: Running internal diagnostic sweep...")
-                    elif action == "snapshot":
-                        print(">>> ACTION: Generating high-priority data dump...")
-            except Exception as e:
-                print(f"Receiver Error: {e}")
-                break
 
 if __name__ == "__main__":
-    # 1. Create instances
+    
+    SensorsSimulator.running_evt.set() # Set to "Running"
+    SensorsSimulator.reset_evt.clear()
+
+    # Create instances
     sensors = [
         # SensorID, Name, Min, Max, Interval
-        SensorsSimulator(100, "temp", 20, 100, 10),
-        SensorsSimulator(200, "optical", 0, 1000, 2),
-        SensorsSimulator(300, "press", 0, 10, 3),
-        SensorsSimulator(400, "speed", 0, 1500, 5),
-        SensorsSimulator(500, "vib", 0, 10, 8)
+        SensorsSimulator(100, "temp", 20, 100, 1),
+        SensorsSimulator(200, "optical", 0, 1000, 0.2),
+        SensorsSimulator(300, "press", 0, 10, 0.3),
+        SensorsSimulator(400, "speed", 0, 1500, 0.5),
+        SensorsSimulator(500, "vib", 0, 10, 0.8)
     ]
 
-    # 2. Start Transmitter
+    # Start Transmitter
     threading.Thread(target=SensorsSimulator.tcp_transmitter, daemon=True).start()
 
-    # 3. Start each sensor in its own thread
+    time.sleep(2)
+
+    # Start each sensor in its own thread
     for s in sensors:
         threading.Thread(target=s.run_simulation, daemon=True).start()
         print(f"Thread started for {s.name}")
@@ -158,5 +165,5 @@ if __name__ == "__main__":
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        SensorsSimulator.running = False
+        SensorsSimulator.running_evt.clear() # Trigger shutdown
         print("\nStopping simulator...")

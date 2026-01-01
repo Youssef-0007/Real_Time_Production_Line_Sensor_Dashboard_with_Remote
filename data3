@@ -1,6 +1,0 @@
-Timestamp,Sensor,Value,Alarm Type
-12:43:58,press,46.0,HW:OK/PR:High Limit
-12:43:57,optical,130.0,HW:OK/PR:High Limit
-12:43:55,optical,105.0,HW:OK/PR:High Limit
-12:43:53,temp,60.0,HW:FAULTY/PR:OK
-12:43:51,vib,2.2,HW:FAULTY/PR:OK

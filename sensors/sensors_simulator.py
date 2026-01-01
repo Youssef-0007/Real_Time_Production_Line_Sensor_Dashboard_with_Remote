@@ -8,8 +8,6 @@ import socket
 import os
 
 
-HOST = '127.0.0.1'
-PORT = 5000
 
 class SensorsSimulator:
     # Static variables shared by ALL instances
@@ -21,11 +19,9 @@ class SensorsSimulator:
     running_evt = threading.Event()
 
 
-    def __init__(self, sensor_id: int, name: str, min_val: int, max_val: int, interval: float) -> None:
+    def __init__(self, sensor_id: int, name: str, interval: float) -> None:
         self.id = sensor_id
         self.name = name
-        self.min_val = min_val
-        self.max_val = max_val
         self.interval = interval
 
     def run_simulation(self) -> None:
@@ -111,44 +107,79 @@ class SensorsSimulator:
                         print("Dashboard disconnected.")
                         break
 
-    @ staticmethod
+    @staticmethod
     def tcp_receiver(conn):
-        """Bonus A: Maintenance Console Logic"""
+        """Standardized Command Listener"""
         print("Simulator: Command Listener Active.")
         while SensorsSimulator.running_evt.is_set():
             try:
-                # Receive the command from the GUI
-                data = conn.recv(1024).decode('utf-8')
-                if not data:
+                raw_data = conn.recv(1024).decode('utf-8')
+                if not raw_data:
                     break
                 
-                # TCP can "clump" messages, so we split by newline if needed
-                for line in data.strip().split('\n'):
-                    cmd = json.loads(line)
-                    if cmd.get('action') == "restart":
-                        # 1. Clear the queue backlog
-                        while not SensorsSimulator.data_queue.empty():
-                            try: SensorsSimulator.data_queue.get_nowait()
-                            except: break
-                        # 2. Trigger the Event
-                        SensorsSimulator.reset_evt.set()
-            except: break
+                # Split by newline in case multiple commands arrived at once
+                for line in raw_data.strip().split('\n'):
+                    clean_line = line.strip()
+                    if not clean_line: continue
+
+                    # Check for PLAIN TEXT commands first (Simple/Fast)
+                    if clean_line == "shutdown":
+                        print("SHUTDOWN COMMAND RECEIVED. CLOSING PROCESS...")
+                        os._exit(0)
                     
+                    if clean_line == "restart":
+                        # Handle plain string restart
+                        SensorsSimulator._trigger_restart()
+                        continue
+
+                    # Check for JSON commands (Robust/Flexible)
+                    try:
+                        cmd = json.loads(clean_line)
+                        action = cmd.get('action')
+                        
+                        if action == "restart":
+                            SensorsSimulator._trigger_restart()
+                        elif action == "shutdown":
+                            print("SHUTDOWN COMMAND RECEIVED via JSON.")
+                            os._exit(0)
+                    except json.JSONDecodeError:
+                        # If it's not JSON and wasn't caught by the strings above, ignore it
+                        print(f"Simulator: Received unknown noise: {clean_line}")
+
+            except Exception as e:
+                print(f"Receiver Error: {e}")
+                break
+
+    @staticmethod
+    def _trigger_restart():
+        """Helper to clear queue and set event"""
+        print("RESTARTING SENSORS...")
+        while not SensorsSimulator.data_queue.empty():
+            try: SensorsSimulator.data_queue.get_nowait()
+            except: break
+        SensorsSimulator.reset_evt.set()
 
 if __name__ == "__main__":
+    # Load config
+    with open('config.json', 'r') as f:
+        config = json.load(f)
     
     SensorsSimulator.running_evt.set() # Set to "Running"
     SensorsSimulator.reset_evt.clear()
 
-    # Create instances
-    sensors = [
-        # SensorID, Name, Min, Max, Interval
-        SensorsSimulator(100, "temp", 20, 100, 1),
-        SensorsSimulator(200, "optical", 0, 1000, 0.2),
-        SensorsSimulator(300, "press", 0, 10, 0.3),
-        SensorsSimulator(400, "speed", 0, 1500, 0.5),
-        SensorsSimulator(500, "vib", 0, 10, 0.8)
-    ]
+    # Automatically create sensor instances from config
+    sensors = []
+    for s_conf in config['sensors']:
+        s = SensorsSimulator(
+            sensor_id=s_conf['id'],
+            name=s_conf['name'],
+            interval=s_conf['interval']
+        )
+        sensors.append(s)
+
+
+    HOST = config['network']['host']
+    PORT = config['network']['port']
 
     # Start Transmitter
     threading.Thread(target=SensorsSimulator.tcp_transmitter, daemon=True).start()

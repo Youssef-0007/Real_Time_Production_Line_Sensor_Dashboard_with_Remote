@@ -1,0 +1,12 @@
+# --- GUI and Visualization ---
+PyQt6==6.6.1
+pyqtgraph==0.13.3
+
+# --- Desktop Notifications ---
+plyer==2.1.0
+
+# --- Cloud Alerts and Webhooks ---
+requests==2.31.0
+
+# --- Optional: For creating the Windows .exe ---
+# pyinstaller==6.3.0

@@ -9,28 +9,28 @@
             "name": "temp",
             "min": 20,
             "max": 80,
-            "interval": 5
+            "interval": 2.5
         },
         {
             "id": 200,
             "name": "optical",
             "min": 1,
             "max": 102,
-            "interval": 2
+            "interval": 1
         },
         {
             "id": 300,
             "name": "press",
             "min": 12,
             "max": 45,
-            "interval": 3
+            "interval": 2
         },
         {
             "id": 400,
             "name": "speed",
             "min": 10,
             "max": 180,
-            "interval": 2
+            "interval": 5
         },
         {
             "id": 500,

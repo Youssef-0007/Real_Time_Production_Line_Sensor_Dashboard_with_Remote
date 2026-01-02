@@ -26,7 +26,7 @@ class SensorsSimulator:
 
     def run_simulation(self) -> None:
         """Logic loop with Restart Support"""
-        file_path = f"./test_data/{self.name}_data.txt"
+        file_path = f"./sensors_data/{self.name}_data.txt"
         try:
             with open(file_path) as f:
                 lines = f.read().splitlines()

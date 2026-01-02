@@ -6,7 +6,7 @@ def launch():
     # 1. Start Simulator (The Server)
     # We use 'stdout=subprocess.DEVNULL' if you want to hide the simulator's text 
     # and only see GUI logs.
-    sim_proc = subprocess.Popen([sys.executable, "sensors/sensors_simulator.py"])
+    sim_proc = subprocess.Popen([sys.executable, "sensors_simulator/sensors_simulator.py"])
     
     # 2. Give the server a moment to open Port 5000
     # If the GUI starts too fast, it will fail to connect.

@@ -1191,4 +1191,4 @@ For issues or questions:
 
 **Version:** 3.0 Final Prototype  
 **Last Updated:** January 2026  
-**Maintainer:** [Your Name/Team]
+**Maintainer:** Youssef Hasan
